@@ -1,0 +1,519 @@
+---
+title: "Assignment2_Part1_VoiceInSchizophrenia"
+author: "Riccardo Fusaroli"
+date: "July 17, 2016"
+output: html_document
+---
+
+```{r, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+
+locpath= "C:/Users/nanna/OneDrive - Aarhus universitet/3. Semester/Experimental Methods 3/Schizophrenia/Pitch"
+
+setwd(locpath)
+
+library(pacman)
+p_load(tidyverse, lmerTest, simr, gdata, lme4, plyr, pastecs)
+
+
+```
+
+
+## Assignment 2 - Part 1 - Assessing voice in schizophrenia
+
+Schizophrenia has been associated with "inappropriate" voice, sometimes monotone, sometimes croaky. A few studies indicate that pitch might be an index of schizophrenia. However, an ongoing meta-analysis of the literature (which you will have a go at in the last assignment) indicates that pitch mean and standard deviation are only weak indicators of diagnosis. Can we do better with our new fancy complex skills?
+
+The corpus you are asked to analyse is a set of voice recordings from people with schizophrenia (just after first diagnosis) and 1-1 matched controls (on gender, age, education). Each participant watched 10 videos of triangles moving across the screen and had to describe them (so you have circa 10 recordings per person). We have already extracted the pitch once every 10 milliseconds and you will have to use this data to assess differences in the voice.
+
+Can you characterize voice in schizophrenia as acoustically different? Report the methods you used to answer this question and the results from the analyses. Add a couple of lines trying to interpret the results (make sense of the difference). E.g. People with schizophrenia tend to have high-pitched voice, and present bigger swings in their prosody than controls. Add a couple of lines describing limitations of the data/analyses if any is relevant.
+
+
+N.B. There are looots of files to be dealt with. Maybe too many for your computer, depending on how you load the files. This is a challenge for you. Some (complementary) possible strategies:
+- You can select a subset of files only (and you have to justify your choice).
+- You can learn how to use the apply() or map() functions.
+- You can coordinate with classmates.
+
+Hint: There is some information in the filenames that you might need.
+Hint: It might be a good idea to first create a function which loads and parses one file, and then loop through the list of files to read them all. For example
+
+
+1. In the course of this assignment you have to first select one datafile and figure out how to:
+
+- Extract "standard" descriptors of pitch: Mean, standard deviation, range
+
+- Extract less "standard" descriptors of pitch you can think of (e.g. median, iqr, mean absoluted deviation, coefficient of variation)
+
+```{r + Simply one file + INCLUDE = F}
+#Function to extract descriptors for one file
+pitch.data = function(x)
+  {
+  result<-c(
+  mean=mean(x$f0, na.rm=TRUE),
+  median=median(x$f0, na.rm=TRUE),
+  max.min=range(x$f0, na.rm=TRUE),
+  range=max(x$f0, na.rm=TRUE) - min(x$f0, na.rm=TRUE),
+  variance=var(x$f0, na.rm=TRUE),
+  std.Dev=sd(x$f0, na.rm=TRUE),
+  iqr=IQR(x$f0, na.rm = TRUE),
+  mad=mad(x$f0, na.rm = TRUE),
+  coefVar=sd(x$f0, na.rm=TRUE)/mean(x$f0, na.rm=TRUE)*100,
+  se=sd(x$f0, na.rm=TRUE)/sqrt(length(x$f0[!is.na(x)])),
+  quantile=quantile(x$f0, na.rm=TRUE)
+  )
+return(result)
+}
+
+p <- read.table("Study1D0S101T1_f0.txt", sep="\t", header = TRUE)
+pitch.data(p)
+
+```
+
+
+```{r}
+
+#Creating list of files in the folder 'Pitch'
+pitch_list<- list.files(path = locpath, recursive = TRUE, pattern = "*f0.txt")
+
+#Preparing columns
+id = NULL
+study = NULL
+diagnosis = NULL
+trial = NULL
+std = NULL
+var = NULL
+mean = NULL
+range = NULL
+median = NULL
+iqr = NULL
+mad = NULL
+x = NULL
+n = 1
+
+
+#The loop 
+
+for (i in pitch_list) {
+  x = read.delim(i, header = T)
+  x = x$f0
+  id[n] = str_extract(i, "S+\\d+")
+  id = str_extract(id,"\\d+")
+  diagnosis[n] = str_extract(str_extract(i,"D+\\d"), "\\d")
+  trial[n] = str_extract(str_extract(i,"T.+\\d"), "\\d+")
+  study[n] = str_extract(i, "\\d")
+  range[n] = max(x) - min(x)
+  mean[n] = mean(x,na.rm = T)
+  var[n] = var(x, na.rm=TRUE)
+  std[n] = sd(x)
+  median[n] = median(x, na.rm = T)
+  iqr[n] = IQR(x,na.rm = T)
+  mad[n] = mad(x,na.rm = T)
+  n = n+1
+}
+
+dframe = data.frame(id,study,diagnosis,trial,range,mean,var,std,median,mad,iqr)
+
+```
+
+
+```{r + Jan the man}
+
+read_pitch <- function(x) {
+    raw <- read.delim(x)
+    name <- as.character(x)
+    
+    data <- cbind(raw, name) %>%
+      mutate(nrow = nrow(raw)) %>%
+      summarise(mean = mean(f0),
+                sd = sd(f0),
+                range = max(f0) - min(f0),
+                iqr = IQR(f0),
+                median = median(f0),
+                mean_abs = mad(f0),
+                coef_var = sd / mean *100,
+                nrow = max(nrow),
+                se = sd / sqrt(nrow))
+    
+    data <- data %>%
+      mutate(name = str_remove_all(name, "Pitch/"),
+         name = str_remove_all(name, ".txt"),
+         name = str_remove_all(name, "_f0")) %>%
+      
+      mutate(study = substr(name, 6, 6),
+         diagnosis = substr(name, 8, 8),
+         ID = substr(name, 10, 12),
+         trial = substr(name, 14, 15)) %>%
+      
+      select(-name) %>%
+      select(ID, study, diagnosis, trial, nrow, mean:coef_var, se)
+    
+    return(data)
+}
+
+```
+
+
+```{r}
+
+#Test file
+test_data = read_pitch("Study1D0S101T1_f0.txt")
+test_data
+
+#We already did it all
+
+```
+
+2. Second you will have to turn the code into a function and loop through all the files (or even better use apply/sapply/lapply)
+
+- Remember to extract the relevant information from the file names (Participant, Diagnosis, Trial, Study)
+```{r}
+
+#Looping but not really
+
+pitch_data = pitch_list %>%
+    purrr::map_df(read_pitch)
+
+write_csv(pitch_data, "data.csv")
+
+data <- read.csv("data.csv")
+
+data$diagnosis <- ifelse(data$diagnosis == "0", "Control", "Schizophrenia")
+
+```
+
+
+```{r}
+demodata <- read.table("Assignment3_VoiceSchizo_DemoData.txt", header = T)
+
+demodata <- rename.vars(demodata, "Subject", "ID")
+demodata <- rename.vars(demodata, "Study", "study")
+demodata <- rename.vars(demodata, "Diagnosis", "diagnosis")
+
+df <- join(data, demodata)
+
+write.csv(df, "data_with_demo.csv")
+
+```
+
+
+3. Make one model per acoustic feature and test whether you can observe significant difference due to Diagnosis. Tip: Which other fixed factors should you control for (that is, include in the model)? Which random ones?
+
+```{r}
+
+#Mean
+stat.desc(df$mean, norm = T)
+df$log_mean<-log(df$mean)
+stat.desc(df$log_mean, norm = T)
+
+lm.mean <- lmer(log_mean ~ diagnosis + Gender + (1 | ID) + (1 | trial), df, REML = F)
+summary(lm.mean)
+
+#Assumptions
+plot(residuals(lm.mean))
+qqnorm(residuals(lm.mean))
+hist(residuals(lm.mean))
+
+
+#Median
+stat.desc(df$median, norm = T)
+df$log_median<-log(df$median)
+stat.desc(df$log_median, norm = T)
+
+
+lm.median <- lmer(log_median ~ diagnosis + Gender + (1 | ID) + (1 | trial), df, REML = F)
+summary(lm.median)
+
+#Assumptions
+plot(residuals(lm.median))
+qqnorm(residuals(lm.median))
+hist(residuals(lm.median))
+
+
+#Standard Deviation
+df$log_sd<-log(df$sd)
+stat.desc(df$log_sd, norm = T)
+
+lm.std <- lmer(log_sd ~ diagnosis + Gender + (1 | ID) + (1 | trial), df, REML = F)
+summary(lm.std)
+
+#Assumptions
+plot(residuals(lm.std))
+qqnorm(residuals(lm.std))
+hist(residuals(lm.std))
+
+#Range
+df$log_range<-log(df$range)
+stat.desc(df$log_range, norm = T)
+
+lm.range <- lmer(log_range ~ diagnosis + Gender + (1 | ID) + (1 | trial), df, REML = F)
+summary(lm.range)
+
+#Assumptions
+plot(residuals(lm.range))
+qqnorm(residuals(lm.range))
+hist(residuals(lm.range))
+
+#Meadian Absolute Deviation
+df$log_mad<-log(df$mean_abs)
+stat.desc(df$log_mad, norm = T)
+
+lm.mad <- lmer(log_mad ~ diagnosis + Gender + (1 | ID) + (1 | trial), df, REML = F)
+summary(lm.mad)
+
+#Assumptions
+plot(residuals(lm.mad))
+qqnorm(residuals(lm.mad))
+hist(residuals(lm.mad))
+
+
+#Coefficient of Variation
+df$log_cv<-log(df$coef_var)
+stat.desc(df$log_cv, norm = T)
+
+lm.cv <- lmer(log_cv ~ diagnosis + Gender + (1 | ID) + (1 | trial), df, REML = F)
+summary(lm.cv)
+
+#Assumptions
+plot(residuals(lm.cv))
+qqnorm(residuals(lm.cv))
+hist(residuals(lm.cv))
+
+#Interquartile range
+df$log_iqr<-log(df$iqr)
+stat.desc(df$log_iqr, norm = T)
+
+
+lm.iqr <- lmer(log_iqr ~ diagnosis + Gender + (1 | ID) + (1 | trial), df, REML = F)
+summary(lm.iqr)
+
+#Assumptions
+plot(residuals(lm.iqr))
+qqnorm(residuals(lm.iqr))
+hist(residuals(lm.iqr))
+
+
+#Standard Error
+df$log_se<-log(df$se)
+stat.desc(df$log_se, norm = T)
+
+
+lm.se <- lmer(log_se ~ diagnosis + Gender + (1 | ID) + (1 | trial), df, REML = F)
+summary(lm.se)
+
+#Assumptions
+plot(residuals(lm.se))
+qqnorm(residuals(lm.se))
+hist(residuals(lm.se))
+
+
+```
+
+- Bonus points: cross-validate the model and report the betas and standard errors from all rounds to get an idea of how robust the estimates are.
+
+```{r}
+p_load(caret, Metrics)
+
+df <- na.omit(df)
+
+folds = createFolds(unique(df$ID), 5)
+folds<-lapply(folds, function(x) unique(df$ID)[x]) #to rename them what they are actually called in the data
+folds
+
+df$model1_pred<- 0
+df$model2_pred<- 0
+df$model3_pred<- 0
+df$model4_pred<- 0
+df$model5_pred<- 0
+df$model6_pred<- 0
+df$model7_pred<- 0
+df$model8_pred<- 0
+
+for (f in folds) {
+  idx = df$ID %in% f
+  train = filter(df, !idx)
+  test = filter(df, idx)
+  
+  model1 = lmer(log_mean ~ diagnosis + Gender + (1 | ID) + (1 | trial), train, REML = F)
+  model2 = lmer(log_median ~ diagnosis + Gender + (1 | ID) + (1 | trial), train, REML = F)
+  model3 = lmer(log_range ~ diagnosis + Gender + (1 | ID) + (1 | trial), train, REML = F)
+  model4 = lmer(log_sd ~ diagnosis + Gender + (1 | ID) + (1 | trial), train, REML = F)
+  model5 = lmer(log_mad ~ diagnosis + Gender + (1 | ID) + (1 | trial), train, REML = F)
+  model6 = lmer(log_cv ~ diagnosis + Gender + (1 | ID) + (1 | trial), train, REML = F)
+  model7 = lmer(log_iqr ~ diagnosis + Gender + (1 | ID) + (1 | trial), train, REML = F)
+  model8 = lmer(log_se ~ diagnosis + Gender + (1 | ID) + (1 | trial), train, REML = F)
+  
+  df$model1_pred[idx] = predict(model1, newdata = test, allow.new.levels = TRUE)
+  df$model2_pred[idx] = predict(model2, newdata = test, allow.new.levels = TRUE)
+  df$model3_pred[idx] = predict(model3, newdata = test, allow.new.levels = TRUE)
+  df$model4_pred[idx] = predict(model4, newdata = test, allow.new.levels = TRUE)
+  df$model5_pred[idx] = predict(model5, newdata = test, allow.new.levels = TRUE)
+  df$model6_pred[idx] = predict(model6, newdata = test, allow.new.levels = TRUE)
+  df$model7_pred[idx] = predict(model7, newdata = test, allow.new.levels = TRUE)
+  df$model8_pred[idx] = predict(model8, newdata = test, allow.new.levels = TRUE)
+  
+}
+
+rmse(df$log_mean, df$model1_pred)
+rmse(df$log_median, df$model2_pred)
+rmse(df$log_range, df$model3_pred)
+rmse(df$log_sd, df$model4_pred)
+rmse(df$log_mad, df$model5_pred)
+rmse(df$log_cv, df$model6_pred)
+rmse(df$log_iqr, df$model7_pred)
+rmse(df$log_se, df$model8_pred)
+
+
+
+
+```
+
+
+3a. Is study a significant predictor in these models? What should you infer from this? Does study interact with diagnosis? What should you infer from this?
+```{r}
+
+#Mean
+st.mean <- lmer(log_mean ~ diagnosis + study + Gender + (1 | ID) + (1 | trial), df, REML = F)
+summary(st.mean)
+
+#Interaction
+in.mean <- lmer(log_mean ~ diagnosis*study + Gender + (1 | ID) + (1 | trial), df, REML = F)
+summary(in.mean)
+
+
+
+anova(st.mean, in.mean)
+
+
+
+
+#Median
+st.median <- lmer(log_median ~ diagnosis + study + Gender + (1 | ID) + (1 | trial), df, REML = F)
+summary(st.median)
+
+#Interaction
+in.median <- lmer(log_median ~ diagnosis*study + Gender + (1 | ID) + (1 | trial), df, REML = F)
+summary(in.median)
+
+anova(st.median, in.median)
+
+
+
+
+#Standard Deviation
+st.std <- lmer(log_sd ~ diagnosis + study + Gender + (1 | ID) + (1 | trial), df, REML = F)
+summary(st.std)
+
+#Interaction
+in.std <- lmer(log_sd ~ diagnosis*study + Gender + (1 | ID) + (1 | trial), df, REML = F)
+summary(in.std)
+
+anova(st.std, in.std)
+
+
+
+
+#Range
+st.range <- lmer(log_range ~ diagnosis + study + Gender+ (1 | ID) + (1 | trial), df, REML = F)
+summary(st.range)
+
+#Interaction
+in.range <- lmer(log_range ~ diagnosis*study + Gender+ (1 | ID) + (1 | trial), df, REML = F)
+summary(in.range)
+
+anova(st.range, in.range)
+
+
+
+
+#Meadian Absolute Deviation
+st.mad <- lmer(log_mad ~ diagnosis + study + Gender+ (1 | ID) + (1 | trial), df, REML = F)
+summary(st.mad)
+
+#Interaction
+in.mad <- lmer(log_mad ~ diagnosis*study + Gender+ (1 | ID) + (1 | trial), df, REML = F)
+summary(in.mad)
+
+anova(st.mad, in.mad)
+#Study not significant
+
+
+
+#Coefficient of Variation
+st.cv <- lmer(log_cv ~ diagnosis + study + Gender + (1 | ID) + (1 | trial), df, REML = F)
+summary(st.cv)
+
+#Interaction
+in.cv <- lmer(log_cv ~ diagnosis*study + Gender + (1 | ID) + (1 | trial), df, REML = F)
+summary(in.cv)
+
+anova(st.cv, in.cv)
+#Study not significant
+
+
+
+
+#Interquartile range
+st.iqr <- lmer(log_iqr ~ diagnosis + study + Gender + (1 | ID) + (1 | trial), df, REML = F)
+summary(st.iqr)
+
+#Interaction
+in.iqr <- lmer(log_iqr ~ diagnosis*study + Gender + (1 | ID) + (1 | trial), df, REML = F)
+summary(in.iqr)
+
+anova(st.iqr, in.iqr)
+#Study not significant
+
+
+
+
+#Standard Error
+st.se <- lmer(log_se ~ diagnosis + study + Gender + (1 | ID) + (1 | trial), df, REML = F)
+summary(st.se)
+
+#Interaction
+in.se <- lmer(log_se ~ diagnosis*study + Gender + (1 | ID) + (1 | trial), df, REML = F)
+summary(in.se)
+
+anova(st.se, in.se)
+
+```
+
+
+Plots
+```{r}
+
+ggplot(df,
+aes(mean,diagnosis,colour=Gender)) +
+geom_point() +
+theme_classic()
+#Outliers
+
+
+
+p_load(effects)
+
+plot(allEffects(in.mean))
+plot(allEffects(in.median))
+plot(allEffects(in.range))
+plot(allEffects(in.std))
+
+plot(allEffects(in.mad))
+plot(allEffects(in.iqr))
+plot(allEffects(in.cv))
+plot(allEffects(in.se))
+
+```
+
+4. Bonus Question: Compare effect size of diagnosis across the different measures. Which measure seems most sensitive?
+- Tip: to compare across measures you need to put all of them on the same scale, that is, you need to "standardize" them (z-score)
+
+
+5. Bonus question. In the Clinical Info file you have additional information about the participants. Which additional parameters (e.g. age, gender) should we control for? Report the effects.
+
+6. Write a paragraph reporting methods and results
+
+
+
+[Next assignment: can we use these measures to build a tool that diagnoses people from voice only?]
+
+## N.B. Remember to save the acoustic features of voice in a separate file, so to be able to load them next time
