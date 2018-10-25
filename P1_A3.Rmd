@@ -9,7 +9,7 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 
 
-locpath= "C:/Users/nanna/OneDrive - Aarhus universitet/3. Semester/Experimental Methods 3/Schizophrenia/Pitch"
+locpath= "C:/Users/nanna/OneDrive - Aarhus universitet/3. Semester/Experimental Methods 3/Schizophrenia/Pitch/Schizophrenia"
 
 setwd(locpath)
 
@@ -313,7 +313,7 @@ hist(residuals(lm.se))
 ```{r}
 p_load(caret, Metrics)
 
-df <- na.omit(df)
+#df <- na.omit(df)
 
 folds = createFolds(unique(df$ID), 5)
 folds<-lapply(folds, function(x) unique(df$ID)[x]) #to rename them what they are actually called in the data
@@ -488,7 +488,7 @@ geom_point() +
 theme_classic()
 #Outliers
 
-
+df$diagnosis <- as.factor(df$diagnosis)
 
 p_load(effects)
 
