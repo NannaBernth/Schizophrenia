@@ -1,0 +1,284 @@
+---
+title: "Assignment 3 - Part 2 - Diagnosing Schizophrenia from Voice"
+author: "Riccardo Fusaroli"
+date: "October 17, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+locpath= "C:/Users/nanna/OneDrive - Aarhus universitet/3. Semester/Experimental Methods 3/Schizophrenia/Pitch/Schizophrenia"
+
+setwd(locpath)
+
+library(pacman)
+p_load(tidyverse, lmerTest, simr, gdata, lme4, plyr, pastecs, broom, caret)
+
+df <- read.csv("data_with_demo.csv") %>% 
+  mutate(uniqueID = paste0(ID, diagnosis))
+
+df$trial <- str_remove(df$trial, "_")
+
+df <- df[-c(1102, 1103, 1104, 1105, 1106, 1107, 1108, 1109, 1324, 1325, 1326, 1327, 1328, 1329, 1330, 1331), ]
+
+df$ID <- as.numeric(as.factor(df$ID))
+
+```
+
+## Assignment 3 - Diagnosing schizophrenia from voice
+
+In the previous part of the assignment you generated a bunch of "features", that is, of quantitative descriptors of voice in schizophrenia, focusing on pitch.
+In the course of this assignment we will use them to try to automatically diagnose schizophrenia from voice only, that is, relying on the set of features you produced last time, we will try to produce an automated classifier.
+
+### Question 1: Can you diagnose schizophrenia from pitch range only? If so, how well?
+
+Build a logistic regression to see whether you can diagnose schizophrenia from pitch range only.
+
+Calculate the different performance measures (accuracy, sensitivity, specificity, PPV, NPV, ROC curve) on a logistic regression using the full dataset. Don't forget the random effects!
+
+```{r}
+
+#Rescaling 
+for (i in 9){
+  minc = min(df[,i])
+  maxc = max(df[,i])
+  df[,i] = (df[,i]-minc)/(maxc-minc)
+}
+
+
+gl.range <- glmer(diagnosis ~ range + (1|ID) + (1| trial) , df, family = "binomial")
+summary(gl.range)
+
+
+p_load(TMB)
+sjPlot::sjp.glmer(gl.range, type = 'fe.prob')
+
+```
+
+
+Confusion Matrix
+```{r}
+#Confusion matrix
+df$PredictionsPerc=predict(gl.range, type = "response")
+
+df$Predictions[df$PredictionsPerc> 0.5]= "Control"
+df$Predictions[df$PredictionsPerc<= 0.5]= "Schizophrenia"
+df$Predictions <- as.factor(df$Predictions)
+
+confusionMatrix(data = df$Predictions, reference = df$diagnosis, positive
+= "Schizophrenia")
+
+```
+
+ROC curve 
+```{r}
+p_load(pROC)
+
+rocCurve <- roc(response = df$diagnosis, predictor =
+df$PredictionsPerc)
+
+auc(rocCurve)
+ci (rocCurve)
+plot(rocCurve, legacy.axes = TRUE)
+
+
+```
+
+Then cross-validate the logistic regression and re-calculate performance on the testing folds.
+
+N.B. The cross-validation functions you already have should be tweaked: you need to calculate these new performance measures.
+```{r}
+
+set.seed(32)
+
+folds = createFolds(unique(df$ID), 5)
+
+#Preparing the variables
+n = 1
+accuracy = NULL
+specificity = NULL
+sensitivity = NULL
+ppv = NULL
+npv = NULL
+auc = NULL
+
+
+set.seed(666)
+
+#Loop for loops <3 
+
+for (i in folds){
+  
+  #Training data set
+  train = subset(df,! (ID %in% i))
+  
+  #Test data set
+  test = subset (df, (ID %in% i)) 
+  
+  #Creating the model on train data sat
+  model=glmer(diagnosis ~ range + (1|trial)+ (1|ID), train, family = "binomial")
+  
+  #Predict on the test data, evaluation
+  
+  test$PredictionsPerc=predict(model, test, allow.new.levels = TRUE, type = "response") 
+  test$Predictions[test$PredictionsPerc>0.5]="Schizophrenia" 
+  test$Predictions[test$PredictionsPerc<=0.5]="Control"
+  test$Predictions <- as.factor(test$Predictions)
+  
+  #Confusion matrix
+    cm=confusionMatrix(data = test$Predictions, reference = test$diagnosis, positive = "Schizophrenia") 
+  
+  #Extracting the relevant features from the confusion matrix
+  accuracy[n] = cm$overall["Accuracy"]
+  
+  sensitivity[n] =  sensitivity(data = test$Predictions, reference = test$diagnosis, positive = "Schizophrenia" )
+  
+  specificity [n] = specificity(data = test$Predictions, reference = test$diagnosis, negative = "Control" ) 
+  
+  ppv[n] = posPredValue(data = test$Predictions, reference = test$diagnosis, positive = "Schizophrenia") 
+  
+  npv[n] = negPredValue(data = test$Predictions, reference = test$diagnosis, negative = "Control")  
+    #Making a ROC curve and extracting AUC
+  rocCurve = roc(response = test$diagnosis,   predictor = test$PredictionsPerc) 
+  auc[n]=auc(rocCurve) 
+    
+  n=n+1  
+}
+
+#Creating df with the data form the 5 fold CV
+range_test = data.frame(accuracy, sensitivity, specificity, ppv, npv, auc)
+
+
+#Taking the mean of relevant features
+mean(range_test$auc)
+mean(range_test$accuracy) 
+mean(range_test$sensitivity) 
+mean(range_test$specificity) 
+
+
+```
+
+N.B. the predict() function generates log odds (the full scale between minus and plus infinity). Log odds > 0 indicates a choice of 1, below a choice of 0.
+
+N.B. you need to decide whether calculate performance on each single test fold or save all the prediction for test folds in one datase, so to calculate overall performance.
+
+N.B. Now you have two levels of structure: subject and study. Should this impact your cross-validation?
+
+### Question 2 - Which single acoustic predictor is the best predictor of diagnosis?
+
+Turning Cross Validation loop into a function 
+```{r}
+
+#Function taking data and model
+Cross.dat.plz = function(data, model) {
+
+
+#Preparing the variables
+accuracy = NULL
+specificity = NULL
+sensitivity = NULL
+ppv = NULL
+npv = NULL
+auc = NULL
+n = 1
+
+# Loop for loops <3
+
+for (i in folds){
+  
+  #Train data set
+  train = subset(df,! (ID %in% i))  
+  
+  #Test data set
+  test = subset(df, (ID %in% i)) 
+  
+  #Model to use
+  modellos = glmer(model, train, family = "binomial")
+  
+  #Predict on test data set
+  test$PredictionsPerc=predict(modellos, test, allow.new.levels = TRUE, type = "response") 
+  test$Predictions[test$PredictionsPerc>0.5]="Schizophrenia" 
+  test$Predictions[test$PredictionsPerc<=0.5]="Control"
+  test$Predictions <- as.factor(test$Predictions)
+  
+  #Create confusion matrix
+  cm=confusionMatrix(data = test$Predictions, reference = test$diagnosis, positive = "Schizophrenia") 
+  
+  #Extracting the relevant values
+  accuracy[n] = cm$overall["Accuracy"]
+  
+  sensitivity[n] =  sensitivity(data = test$Predictions, reference = test$diagnosis, positive = "Schizophrenia" )
+  
+  specificity [n] = specificity(data = test$Predictions, reference = test$diagnosis, negative = "Control" ) 
+  ppv[n] = posPredValue(data = test$Predictions, reference = test$diagnosis, positive = "Schizophrenia") 
+  npv[n] = negPredValue(data = test$Predictions, reference = test$diagnosis, negative = "Control")  
+  
+  roc_curve = roc(response = test$diagnosis,   predictor = test$PredictionsPerc) 
+  auc[n]=auc(roc_curve) 
+    
+  n=n+1  
+}
+
+#Return it in a dataframe
+tosender = data.frame(accuracy, sensitivity, specificity, ppv, npv, auc)
+
+
+return(tosender)
+}
+
+```
+
+
+Time to crossvalidate those features
+```{r}
+
+#Rescaling all variables
+for (i in 7:14){
+  minc = min(df[,i])
+  maxc = max(df[,i])
+  df[,i] = (df[,i]-minc)/(maxc-minc)
+}
+
+
+mean_cross = Cross.dat.plz(df, diagnosis ~ mean + (1 |ID) + (1|trial))
+median_cross = Cross.dat.plz(df, diagnosis ~ median + (1 |ID) + (1|trial))
+
+#range_cross = Cross.dat.plz(df, diagnosis ~ mean + (1 |ID) + (1|trial))
+iqr__cross = Cross.dat.plz(df, diagnosis ~ iqr + (1 |ID) + (1|trial))
+
+mad_cross = Cross.dat.plz(df, diagnosis ~ mean_abs + (1 |ID) + (1|trial))
+cov_cross = Cross.dat.plz(df, diagnosis ~ coef_var + (1 |ID) + (1|trial))
+
+#cov fails to converge??
+
+sd_cross = Cross.dat.plz(df, diagnosis ~ sd + (1 |ID) + (1|trial))
+se_cross = Cross.dat.plz(df, diagnosis ~ se + (1 |ID) + (1|trial))
+
+
+
+
+```
+
+
+### Question 3 - Which combination of acoustic predictors is best for diagnosing schizophrenia?
+
+Now it's time to go wild! Use all (voice-related) variables and interactions you can think of. Compare models and select the best performing model you can find.
+
+Remember:
+- Out-of-sample error crucial to build the best model!
+- After choosing the model, send Malte and Riccardo the code of your model
+
+### Question 4: Properly report the results
+
+METHODS SECTION: how did you analyse the data? That is, how did you extract the data, designed the models and compared their performance?
+
+RESULTS SECTION: can you diagnose schizophrenia based on voice? which features are used? Comment on the difference between the different performance measures.
+
+### Bonus question 5
+
+You have some additional bonus data involving speech rate, pauses, etc. Include them in your analysis. Do they improve classification?
+
+### Bonus question 6
+
+Logistic regression is only one of many classification algorithms. Try using others and compare performance. Some examples: Discriminant Function, Random Forest, Support Vector Machine, etc. The package caret provides them.
