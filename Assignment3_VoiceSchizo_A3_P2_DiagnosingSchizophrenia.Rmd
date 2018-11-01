@@ -13,22 +13,38 @@ locpath= "C:/Users/nanna/OneDrive - Aarhus universitet/3. Semester/Experimental 
 setwd(locpath)
 
 library(pacman)
-p_load(tidyverse, lmerTest, simr, gdata, lme4, plyr, pastecs, broom, caret)
+p_load(tidyverse, lmerTest, simr, gdata, lme4, plyr, pastecs, broom, caret, pROC, boot)
 
-df <- read.csv("data_with_demo.csv") %>% 
-  mutate(uniqueID = paste0(ID, diagnosis))
+
+df <- read.csv("data_with_demo.csv")
+
+#df$diagnosis <- as.character(df$diagnosis)
+#df$diagnosis[df$diagnosis == "Schizophrenia"] <- 1
+#df$diagnosis[df$diagnosis == "Control"] <- 0
+#df$uniqueID <- paste0(df$ID, df$diagnosis)
 
 df$trial <- str_remove(df$trial, "_")
 
 df <- df[-c(1102, 1103, 1104, 1105, 1106, 1107, 1108, 1109, 1324, 1325, 1326, 1327, 1328, 1329, 1330, 1331), ]
 
+#df$Gender <- as.character(df$Gender)
+#df$Gender[df$Gender == "F"] <- 1
+#df$Gender[df$Gender == "M"] <- 0
+
+
 df$ID <- as.numeric(as.factor(df$ID))
+
+#df$uniqueID <- as.numeric(df$uniqueID)
+
+df$diagnosis <- as.factor(df$diagnosis)
+
 
 ```
 
 ## Assignment 3 - Diagnosing schizophrenia from voice
 
 In the previous part of the assignment you generated a bunch of "features", that is, of quantitative descriptors of voice in schizophrenia, focusing on pitch.
+
 In the course of this assignment we will use them to try to automatically diagnose schizophrenia from voice only, that is, relying on the set of features you produced last time, we will try to produce an automated classifier.
 
 ### Question 1: Can you diagnose schizophrenia from pitch range only? If so, how well?
@@ -47,12 +63,9 @@ for (i in 9){
 }
 
 
-gl.range <- glmer(diagnosis ~ range + (1|ID) + (1| trial) , df, family = "binomial")
+gl.range <- glmer(diagnosis ~ range + (1|ID) + (1|trial), df, family = "binomial")
 summary(gl.range)
 
-
-p_load(TMB)
-sjPlot::sjp.glmer(gl.range, type = 'fe.prob')
 
 ```
 
@@ -60,20 +73,22 @@ sjPlot::sjp.glmer(gl.range, type = 'fe.prob')
 Confusion Matrix
 ```{r}
 #Confusion matrix
-df$PredictionsPerc=predict(gl.range, type = "response")
 
-df$Predictions[df$PredictionsPerc> 0.5]= "Control"
-df$Predictions[df$PredictionsPerc<= 0.5]= "Schizophrenia"
-df$Predictions <- as.factor(df$Predictions)
+#Predict in probabilities not in log odd (the type = "response")
+df$PredictionsPerc <- predict(gl.range, type = "response")
 
-confusionMatrix(data = df$Predictions, reference = df$diagnosis, positive
+#
+df$PredictionsRange[df$PredictionsPerc> 0.5]= "Control"
+df$PredictionsRange[df$PredictionsPerc<= 0.5]= "Schizophrenia"
+df$PredictionsRange <- as.factor(df$PredictionsRange)
+
+caret::confusionMatrix(data = df$PredictionsRange, reference = df$diagnosis, positive
 = "Schizophrenia")
 
 ```
 
 ROC curve 
 ```{r}
-p_load(pROC)
 
 rocCurve <- roc(response = df$diagnosis, predictor =
 df$PredictionsPerc)
@@ -90,9 +105,11 @@ Then cross-validate the logistic regression and re-calculate performance on the 
 N.B. The cross-validation functions you already have should be tweaked: you need to calculate these new performance measures.
 ```{r}
 
-set.seed(32)
+#df$Gender <- as.factor(df$Gender)
+#df$uniqueID <- as.factor(df$uniqueID)
 
 folds = createFolds(unique(df$ID), 5)
+#folds = createFolds(unique(df$uniqueID), 5)
 
 #Preparing the variables
 n = 1
@@ -102,6 +119,7 @@ sensitivity = NULL
 ppv = NULL
 npv = NULL
 auc = NULL
+
 
 
 set.seed(666)
@@ -117,13 +135,13 @@ for (i in folds){
   test = subset (df, (ID %in% i)) 
   
   #Creating the model on train data sat
-  model=glmer(diagnosis ~ range + (1|trial)+ (1|ID), train, family = "binomial")
+  model=glmer(diagnosis ~ range + (1|ID) + (1|trial), df, family = "binomial")
   
   #Predict on the test data, evaluation
   
   test$PredictionsPerc=predict(model, test, allow.new.levels = TRUE, type = "response") 
-  test$Predictions[test$PredictionsPerc>0.5]="Schizophrenia" 
-  test$Predictions[test$PredictionsPerc<=0.5]="Control"
+  test$Predictions[test$PredictionsPerc>0.5]="Control" 
+  test$Predictions[test$PredictionsPerc<=0.5]="Schizophrenia"
   test$Predictions <- as.factor(test$Predictions)
   
   #Confusion matrix
@@ -244,19 +262,54 @@ for (i in 7:14){
 mean_cross = Cross.dat.plz(df, diagnosis ~ mean + (1 |ID) + (1|trial))
 median_cross = Cross.dat.plz(df, diagnosis ~ median + (1 |ID) + (1|trial))
 
-#range_cross = Cross.dat.plz(df, diagnosis ~ mean + (1 |ID) + (1|trial))
-iqr__cross = Cross.dat.plz(df, diagnosis ~ iqr + (1 |ID) + (1|trial))
+range_cross = Cross.dat.plz(df, diagnosis ~ mean + (1 |ID) + (1|trial))
+iqr_cross = Cross.dat.plz(df, diagnosis ~ iqr + (1 |ID) + (1|trial))
 
 mad_cross = Cross.dat.plz(df, diagnosis ~ mean_abs + (1 |ID) + (1|trial))
 cov_cross = Cross.dat.plz(df, diagnosis ~ coef_var + (1 |ID) + (1|trial))
 
 #cov fails to converge??
 
-sd_cross = Cross.dat.plz(df, diagnosis ~ sd + (1 |ID) + (1|trial))
+sd <- glmer(diagnosis ~ sd + (1 |ID) + (1|trial), df, family = "binomial")
+summary(sd)
+
+sd_cross = Cross.dat.plz(df, diagnosis ~ sd + (1 |ID) + (1|trial)) #not significant though
 se_cross = Cross.dat.plz(df, diagnosis ~ se + (1 |ID) + (1|trial))
 
 
 
+mean(mean_cross$auc)
+mean(median_cross$auc) 
+mean(range_cross$auc)   
+mean(iqr_cross$auc)    
+mean(mad_cross$auc)    
+mean(sd_cross$auc)     
+mean(se_cross$auc)     
+
+#[1] 0.5664553
+#[1] 0.5429907
+#[1] 0.5664553
+#[1] 0.6086776
+#[1] 0.6024672
+#[1] 0.6188008
+#[1] 0.5692603
+
+
+mean(mean_cross$accuracy)   
+mean(median_cross$accuracy)  
+mean(range_cross$accuracy)    
+mean(iqr_cross$accuracy)   
+mean(mad_cross$accuracy)  
+mean(sd_cross$accuracy)      
+mean(se_cross$accuracy)
+
+#[1] 0.5056488
+#[1] 0.4984168
+#[1] 0.5056488
+#[1] 0.5619683
+#[1] 0.5696419
+#[1] 0.5508976
+#[1] 0.4602704
 
 ```
 
@@ -268,12 +321,122 @@ Now it's time to go wild! Use all (voice-related) variables and interactions you
 Remember:
 - Out-of-sample error crucial to build the best model!
 - After choosing the model, send Malte and Riccardo the code of your model
+```{r}
+
+#Trying out models 
+
+combi1 <- glmer(diagnosis ~ range*mean + (1 | Gender) + (1|study), df, family = "binomial")
+summary(combi1)
+
+combi2 <- glmer(diagnosis ~ range*mean + study + (1|Gender), df, family = "binomial")
+summary(combi2)
+
+combi3 <- glmer(diagnosis ~ range*mean + study + (1|ID) + (1|trial), df, family = "binomial")
+summary(combi3)
+
+combi4 <- glmer(diagnosis ~ range*sd + study + (1|ID), df, family = "binomial")
+summary(combi4)
+
+combi5 <- glmer(diagnosis ~ range*sd + (1|ID) + (1|study), df, family = "binomial")
+summary(combi5)
+
+combi6<- glmer(diagnosis ~ range*mean_abs + (1|ID) + (1|study), df, family = "binomial")
+summary(combi6)
+
+
+#we forgot to set seed. 
+
+#Cross validation
+combi1_cross <- Cross.dat.plz(df, diagnosis ~ range*mean + (1 | Gender) + (1|study))
+combi2_cross <- Cross.dat.plz(df, diagnosis ~ range*mean + study + (1|Gender))
+combi3_cross <- Cross.dat.plz(df, diagnosis ~ range*mean + study + (1|ID) + (1|trial))
+combi4_cross <- Cross.dat.plz(df, diagnosis ~ range*sd + study + (1|ID))
+combi5_cross <- Cross.dat.plz(df, diagnosis ~ range*sd + (1|ID) + (1|study))
+combi6_cross <- Cross.dat.plz(df, diagnosis ~ range*mean_abs + (1|ID) + (1|study))
+
+#Mean AUC to decide on best model
+mean(combi1_cross$auc)
+mean(combi2_cross$auc)
+mean(combi3_cross$auc)
+mean(combi4_cross$auc)
+mean(combi5_cross$auc)
+mean(combi6_cross$auc)
+
+#[1] 0.6078922
+#[2] 0.6070459
+#[3] 0.5967868
+#[4] 0.5991628
+#[5] 0.6029624
+#[6] 0.5897355
+
+
+#Extracting mean and sd fromt the best model
+mean(combi1_cross$accuracy)
+sd(combi1_cross$accuracy)
+
+
+mean(combi1_cross$sensitivity)
+sd(combi1_cross$sensitivity)
+
+mean(combi1_cross$specificity)
+sd(combi1_cross$specificity)
+
+
+mean(combi1_cross$ppv)
+sd(combi1_cross$ppv)
+
+mean(combi1_cross$npv)
+sd(combi1_cross$npv)
+
+mean(combi1_cross$auc)
+sd(combi1_cross$auc)
+
+
+
+#Confusion matrix
+
+#Predict in probabilities not in log odd (the type = "response")
+df$PredictionsBest <- predict(combi1, type = "response")
+
+df$PredictionsCombi[df$PredictionsBest> 0.5]= "Control"
+df$PredictionsCombi[df$PredictionsBest<= 0.5]= "Schizophrenia"
+df$PredictionsCombi <- as.factor(df$PredictionsCombi)
+
+confusionMatrix(data = df$PredictionsCombi, reference = df$diagnosis, positive
+= "Schizophrenia")
+
+
+```
+
+
 
 ### Question 4: Properly report the results
 
 METHODS SECTION: how did you analyse the data? That is, how did you extract the data, designed the models and compared their performance?
 
 RESULTS SECTION: can you diagnose schizophrenia based on voice? which features are used? Comment on the difference between the different performance measures.
+
+```{r}
+library(ggplot2)
+
+df$diagnosis <- as.numeric(df$diagnosis)
+
+df$diagnosis <- as.character(df$diagnosis)
+df$diagnosis[df$diagnosis == "1"] <- 0
+
+df$diagnosis[df$diagnosis == "2"] <- 1
+df$diagnosis <- as.numeric(df$diagnosis)
+
+
+binomial_smooth <- function(...) {
+  geom_smooth(method = "glm", method.args = list(family = "binomial"), ...)
+}
+
+
+ggplot(df, aes(x=diagnosis, y=range)) + geom_point(aes(color = diagnosis))+
+  binomial_smooth() + theme_classic()
+```
+
 
 ### Bonus question 5
 
