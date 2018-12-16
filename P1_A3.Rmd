@@ -70,10 +70,13 @@ pitch.data(p)
 ```
 
 
-```{r}
+```{r + creating pitch_list}
 
 #Creating list of files in the folder 'Pitch'
 pitch_list<- list.files(path = locpath, recursive = TRUE, pattern = "*f0.txt")
+```
+
+```{r + Loop that we do not use}
 
 #Preparing columns
 id = NULL
@@ -116,7 +119,7 @@ dframe = data.frame(id,study,diagnosis,trial,range,mean,var,std,median,mad,iqr)
 ```
 
 
-```{r + Jan the man}
+```{r + Jan the man + Loop to use}
 
 read_pitch <- function(x) {
     raw <- read.delim(x)
@@ -313,7 +316,7 @@ hist(residuals(lm.se))
 ```{r}
 p_load(caret, Metrics)
 
-#df <- na.omit(df)
+df <- na.omit(df)
 
 folds = createFolds(unique(df$ID), 5)
 folds<-lapply(folds, function(x) unique(df$ID)[x]) #to rename them what they are actually called in the data
@@ -363,7 +366,14 @@ rmse(df$log_iqr, df$model7_pred)
 rmse(df$log_se, df$model8_pred)
 
 
-
+# [1] 0.2296657
+# [1] 0.2552219
+# [1] 0.4789536
+# [1] 0.6224559
+# [1] 0.6162361
+# [1] 0.6396738
+# [1] 0.7798044
+# [1] 0.7223537
 
 ```
 
